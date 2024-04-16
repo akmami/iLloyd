@@ -1,5 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import '../styles/canvas.css';
+import Toggle from '../components/toggle';
 
 function Canvas() {
 
@@ -7,36 +8,25 @@ function Canvas() {
     const [points, setPoints] = useState([]);
     const [lines, setLines] = useState([]);
     const [scale, setScale] = useState(1);
+    const [addPointState, setAddPointState] = useState(false);
 
 
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        const context = canvas.getContext('2d');
-        const scale = window.devicePixelRatio;
-    
-        canvas.width = 600 * scale;
-        canvas.height = 400 * scale;
-        canvas.style.width = '600px';
-        canvas.style.height = '400px';
-    
-        context.scale(scale, scale);
-        draw(context);
-    }, [points, lines, scale]);
-    
+    const draw = useCallback((ctx) => {
+        const centerX = ctx.canvas.width / 2;
+        const centerY = ctx.canvas.height / 2;
 
-    const draw = (ctx) => {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.translate(centerX, centerY);
         ctx.scale(scale, scale);
+        ctx.translate(-centerX, -centerY);
     
-        // Draw all points
         points.forEach(point => {
             ctx.beginPath();
-            ctx.arc(point.x, point.y, 5 / scale, 0, 2 * Math.PI);
+            ctx.arc(point.x, point.y, 2 / scale, 0, 2 * Math.PI);
             ctx.fill();
         });
     
-        // Draw all lines
         lines.forEach(line => {
             ctx.beginPath();
             ctx.moveTo(line.start.x, line.start.y);
@@ -44,14 +34,49 @@ function Canvas() {
             ctx.lineWidth = 1 / scale;
             ctx.stroke();
         });
-    };       
+    }, [points, lines, scale]);
 
+    
+    useEffect(() => {
+
+        const updateCanvasSize = () => {
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+
+            const width = window.innerWidth * 0.9;
+            const height = window.innerHeight * 0.8;
+
+            canvas.width = width;
+            canvas.height = height;
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+            draw(ctx);
+        };
+
+        window.addEventListener('resize', updateCanvasSize);
+        updateCanvasSize();
+
+        return () => {
+            window.removeEventListener('resize', updateCanvasSize);
+        };
+    }, [draw]);
+
+    const handleToggle = () => {
+        setAddPointState(!addPointState);
+    };
 
     const addPoint = (e) => {
-        const rect = canvasRef.current.getBoundingClientRect();
-        const newX = (e.clientX - rect.left) / scale;
-        const newY = (e.clientY - rect.top) / scale;
-        setPoints([...points, { x: newX, y: newY }]);
+
+        if ( addPointState ) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+        
+            const newX = ((e.clientX - rect.left) - centerX) / scale + centerX;
+            const newY = ((e.clientY - rect.top) - centerY) / scale + centerY;
+        
+            setPoints([...points, { x: newX, y: newY }]);
+        }
     };
     
 
@@ -68,10 +93,13 @@ function Canvas() {
     return (
         <div>
             <div className="canvas-frame">
-                <canvas ref={canvasRef} width={600 * scale} height={400 * scale} style={{ width: '600px', height: '400px' }} onClick={addPoint} />
+                <canvas ref={canvasRef} onClick={addPoint} />
             </div>
-            <button onClick={zoomIn}>Zoom In</button>
-            <button onClick={zoomOut}>Zoom Out</button>
+            <div>
+                <Toggle text="Add points " toggleState={addPointState} onToggle={handleToggle}/>
+                <button onClick={zoomIn}>Zoom In</button>
+                <button onClick={zoomOut}>Zoom Out</button>
+            </div>
         </div>
     );
 }
