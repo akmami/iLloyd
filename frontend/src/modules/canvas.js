@@ -9,7 +9,8 @@ function Canvas() {
     const [lines, setLines] = useState([]);
     const [scale, setScale] = useState(1);
     const [addPointState, setAddPointState] = useState(false);
-
+    const [isDragging, setIsDragging] = useState(false);
+    const [lastPosition, setLastPosition] = useState({ x: null, y: null });
 
     const draw = useCallback((ctx) => {
         const centerX = ctx.canvas.width / 2;
@@ -43,7 +44,7 @@ function Canvas() {
             const canvas = canvasRef.current;
             const ctx = canvas.getContext('2d');
 
-            const width = window.innerWidth * 0.9;
+            const width = window.innerWidth;
             const height = window.innerHeight * 0.8;
 
             canvas.width = width;
@@ -89,18 +90,69 @@ function Canvas() {
         setScale(scale / 1.1);
     };
 
+
+    const handleMouseDown = (e) => {
+        if ( !addPointState ) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            setLastPosition({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            setIsDragging(true);
+        }
+    };
+    
+
+    const handleMouseMove = (e) => {
+        if ( !addPointState && isDragging) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+            const deltaX = (currentX - lastPosition.x) / scale;
+            const deltaY = (currentY - lastPosition.y) / scale;
+    
+            // Update all points by the delta
+            const newPoints = points.map(point => ({
+                x: point.x + deltaX,
+                y: point.y + deltaY
+            }));
+    
+            // Update all lines accordingly
+            const newLines = lines.map(line => ({
+                start: { x: line.start.x + deltaX, y: line.start.y + deltaY },
+                end: { x: line.end.x + deltaX, y: line.end.y + deltaY }
+            }));
+    
+            setPoints(newPoints);
+            setLines(newLines);
+            setLastPosition({ x: currentX, y: currentY });
+        }
+    };
+    
+
+    const handleMouseUp = () => {
+        setIsDragging(false);
+    };
+    
     
     return (
         <div>
             <div className="canvas-frame">
-                <canvas ref={canvasRef} onClick={addPoint} />
+                <canvas 
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    ref={canvasRef} 
+                    onClick={addPoint}
+                    style={{ cursor: isDragging ? 'grabbing' : 'default' }}/>
             </div>
-            <div>
+            <div className="control-panel">
                 <Toggle text="Add points " toggleState={addPointState} onToggle={handleToggle}/>
-                <button onClick={zoomIn}>Zoom In</button>
-                <button onClick={zoomOut}>Zoom Out</button>
+                <div className="control-panel">
+                    <button onClick={zoomIn}>Zoom In</button>
+                    <button onClick={zoomOut}>Zoom Out</button>
+                </div>
             </div>
         </div>
+
     );
 }
 
