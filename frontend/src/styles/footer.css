@@ -1,0 +1,9 @@
+footer {
+    background-color: rgb(217, 217, 217);
+    height: 5vh;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px;
+    align-content: center;
+  }
