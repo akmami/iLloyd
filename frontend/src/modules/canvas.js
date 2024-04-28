@@ -6,11 +6,12 @@ function Canvas() {
 
     const canvasRef = useRef(null);
     const [points, setPoints] = useState([]);
+    const [lastPosition, setLastPosition] = useState([]);
     const [lines, setLines] = useState([]);
     const [scale, setScale] = useState(1);
     const [addPointState, setAddPointState] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
-    const [lastPosition, setLastPosition] = useState({ x: null, y: null });
+    const [inputValue, setInputValue] = useState('');
 
     const draw = useCallback((ctx) => {
         const centerX = ctx.canvas.width / 2;
@@ -35,6 +36,10 @@ function Canvas() {
             ctx.lineWidth = 1 / scale;
             ctx.stroke();
         });
+
+        // points.forEach(point => {
+        //     console.log(point);
+        // });
     }, [points, lines, scale]);
 
     
@@ -130,6 +135,40 @@ function Canvas() {
     const handleMouseUp = () => {
         setIsDragging(false);
     };
+
+
+    const handleInputChange = (e) => {
+        setInputValue(e.target.value);
+    };
+
+
+    const handleAddPoints = () => {
+        
+        const numPoints = parseInt(inputValue, 10);
+        
+        if (isNaN(numPoints)) {
+            alert('Please enter a valid number');
+            return;
+        }
+
+        const newPoints = [];
+        
+        for (let i = 0; i < numPoints; i++) {
+            newPoints.push({
+                x: Math.random() * canvasRef.current.width,
+                y: Math.random() * canvasRef.current.height
+            });
+        }
+
+        setPoints([...points, ...newPoints]);
+        setInputValue('');
+    };
+
+
+    const clear = () => {
+        setPoints([]);
+        setLines([]);
+    }
     
     
     return (
@@ -145,11 +184,19 @@ function Canvas() {
                     style={{ cursor: isDragging ? 'grabbing' : 'default' }}/>
             </div>
             <div className="control-panel">
+                <input
+                    type="text"
+                    value={inputValue}
+                    onChange={handleInputChange}
+                    placeholder="Enter number of points"
+                />
+                <button onClick={handleAddPoints}>Add Points</button>
                 <Toggle text="Add points " toggleState={addPointState} onToggle={handleToggle}/>
                 <div className="control-panel">
                     <button onClick={zoomIn}>Zoom In</button>
                     <button onClick={zoomOut}>Zoom Out</button>
                 </div>
+                <button onClick={clear}>Clear</button>
             </div>
         </div>
 
