@@ -1,0 +1,17 @@
+.toggle {
+    display: flex;
+    align-items: center;
+    padding: 0px 20px;
+}
+
+.toggle button {
+    background-color: #007bff;
+    color: white;
+    cursor: pointer;
+    margin-left: 10px;
+    font-size: 16px;
+}
+
+.toggle button:hover {
+    background-color: #0056b3;
+}
