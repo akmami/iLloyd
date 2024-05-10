@@ -17,7 +17,7 @@ def default(request):
     if "points" not in data:
         return Response({"error": "Missing points."}, status=status.HTTP_400_BAD_REQUEST)
     
-    points = data["points"]
+    points = np.array(data["points"])
     
     vor = Voronoi(points)
     
@@ -44,29 +44,33 @@ def default(request):
             # extend ray sufficiently far
             ray_length = 1000
             ray_endpoint = vor.vertices[v_finite] + direction * ray_length
-            edges.append((vor.vertices[v_finite], ray_endpoint))
+            edges.append((vor.vertices[v_finite].tolist(), ray_endpoint.tolist()))
         else:
-            edges.append((vor.vertices[v1], vor.vertices[v2]))
+            edges.append((vor.vertices[v1].tolist(), vor.vertices[v2].tolist()))
 
     
     cells = {}
     for point_idx, region_idx in enumerate(vor.point_region):
         vertices = vor.regions[region_idx]
         if -1 not in vertices:
-            cell_vertices = [vor.vertices[i] for i in vertices]
+            cell_vertices = np.array([vor.vertices[i] for i in vertices])
             cells[point_idx] = cell_vertices
-       
-    centroids = []
-    for point_idx, cell_vertices in cells.items():
-        cell_vertices = np.array(cell_vertices)
-        centroid = cell_vertices.mean(axis=0)
-        centroids.append(centroid)
     
+    x_min, y_min = points.min(axis=0)
+    x_max, y_max = points.max(axis=0)
+
+    def clip_to_boundary(x, y):
+        x = max(min(x, x_max), x_min)
+        y = max(min(y, y_max), y_min)
+        return np.array([x, y])
+
+    centroids = []
     centroid_edges = []
     for point_idx, cell_vertices in cells.items():
-        cell_vertices = np.array(cell_vertices)
+        cell_vertices = np.array([clip_to_boundary(*vertex) for vertex in cell_vertices])
         centroid = cell_vertices.mean(axis=0)
-        centroid_edges.append( [points[point_idx], centroid] )
+        centroids.append(centroid.tolist())
+        centroid_edges.append( [points[point_idx].tolist(), centroid.tolist()] )
     
     return Response({"points": points, "edges": edges, "centroids": centroids, "centroid_edges": centroid_edges}, status=status.HTTP_200_OK)
 
