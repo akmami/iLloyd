@@ -1,17 +1,24 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import '../styles/canvas.css';
 import Toggle from '../components/toggle';
+import fetchData from '../helpers/fetch';
+import sleep from '../helpers/sleep';
 
 function Canvas() {
 
     const canvasRef = useRef(null);
     const [points, setPoints] = useState([]);
     const [lastPosition, setLastPosition] = useState([]);
+    const [centroids, setCentroids] = useState([]);
+    const [centroidEdges, setCentroidEdges] = useState([]);
     const [lines, setLines] = useState([]);
     const [scale, setScale] = useState(1);
     const [addPointState, setAddPointState] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
-    const [inputValue, setInputValue] = useState('');
+    const [inputPointValue, setInputPointValue] = useState('');
+    const [inputIterationValue, setInputIterationValue] = useState('');
+    const [inputDelayValue, setInputDelayValue] = useState('');
+    
 
     const draw = useCallback((ctx) => {
         const centerX = ctx.canvas.width / 2;
@@ -25,17 +32,35 @@ function Canvas() {
     
         points.forEach(point => {
             ctx.beginPath();
-            ctx.arc(point.x, point.y, 2 / scale, 0, 2 * Math.PI);
+            ctx.arc(point[0], point[1], 2 / scale, 0, 2 * Math.PI);
             ctx.fill();
         });
+        
+        ctx.fillStyle = "red";
+        centroids.forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point[0], point[1], 2 / scale, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+        ctx.fillStyle = "black";
     
         lines.forEach(line => {
             ctx.beginPath();
-            ctx.moveTo(line.start.x, line.start.y);
-            ctx.lineTo(line.end.x, line.end.y);
+            ctx.moveTo(line[0][0], line[0][1]);
+            ctx.lineTo(line[1][0], line[1][1]);
             ctx.lineWidth = 1 / scale;
             ctx.stroke();
         });
+
+        ctx.strokeStyle = 'blue';
+        centroidEdges.forEach(line => {
+            ctx.beginPath();
+            ctx.moveTo(line[0][0], line[0][1]);
+            ctx.lineTo(line[1][0], line[1][1]);
+            ctx.lineWidth = 0.8 / scale;
+            ctx.stroke();
+        });
+        ctx.strokeStyle = 'black';
 
         // points.forEach(point => {
         //     console.log(point);
@@ -67,9 +92,11 @@ function Canvas() {
         };
     }, [draw]);
 
+
     const handleToggle = () => {
         setAddPointState(!addPointState);
     };
+
 
     const addPoint = (e) => {
 
@@ -81,7 +108,7 @@ function Canvas() {
             const newX = ((e.clientX - rect.left) - centerX) / scale + centerX;
             const newY = ((e.clientY - rect.top) - centerY) / scale + centerY;
         
-            setPoints([...points, { x: newX, y: newY }]);
+            setPoints([...points, [newX, newY]]);
         }
     };
     
@@ -96,10 +123,15 @@ function Canvas() {
     };
 
 
+    const resetZoom = () => {
+        setScale(1);
+    };
+
+
     const handleMouseDown = (e) => {
         if ( !addPointState ) {
             const rect = canvasRef.current.getBoundingClientRect();
-            setLastPosition({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            setLastPosition([e.clientX - rect.left, e.clientY - rect.top]);
             setIsDragging(true);
         }
     };
@@ -110,24 +142,37 @@ function Canvas() {
             const rect = canvasRef.current.getBoundingClientRect();
             const currentX = e.clientX - rect.left;
             const currentY = e.clientY - rect.top;
-            const deltaX = (currentX - lastPosition.x) / scale;
-            const deltaY = (currentY - lastPosition.y) / scale;
+            const deltaX = (currentX - lastPosition[0]) / scale;
+            const deltaY = (currentY - lastPosition[1]) / scale;
     
             // Update all points by the delta
-            const newPoints = points.map(point => ({
-                x: point.x + deltaX,
-                y: point.y + deltaY
-            }));
+            const newPoints = points.map(point => ([
+                point[0] + deltaX,
+                point[1] + deltaY
+            ]));
+
+            // Update all centroids by the delta
+            const newCentroids = centroids.map(point => ([
+                point[0] + deltaX,
+                point[1] + deltaY
+            ]));
     
             // Update all lines accordingly
-            const newLines = lines.map(line => ({
-                start: { x: line.start.x + deltaX, y: line.start.y + deltaY },
-                end: { x: line.end.x + deltaX, y: line.end.y + deltaY }
-            }));
+            const newLines = lines.map(line => ([
+                [line[0][0] + deltaX, line[0][1] + deltaY],
+                [line[1][0] + deltaX, line[1][1] + deltaY]
+            ]));
+
+            const newCentroidsEdges = centroidEdges.map(line => ([
+                [line[0][0] + deltaX, line[0][1] + deltaY],
+                [line[1][0] + deltaX, line[1][1] + deltaY]
+            ]));
     
             setPoints(newPoints);
             setLines(newLines);
-            setLastPosition({ x: currentX, y: currentY });
+            setCentroids(newCentroids);
+            setLastPosition([currentX, currentY]);
+            setCentroidEdges(newCentroidsEdges);
         }
     };
     
@@ -137,14 +182,18 @@ function Canvas() {
     };
 
 
-    const handleInputChange = (e) => {
-        setInputValue(e.target.value);
+    const handleInputPointChange = (e) => {
+        setInputPointValue(e.target.value);
+    };
+
+    const handleInputIterationChange = (e) => {
+        setInputIterationValue(e.target.value);
     };
 
 
     const handleAddPoints = () => {
         
-        const numPoints = parseInt(inputValue, 10);
+        const numPoints = parseInt(inputPointValue, 10);
         
         if (isNaN(numPoints)) {
             alert('Please enter a valid number');
@@ -154,22 +203,63 @@ function Canvas() {
         const newPoints = [];
         
         for (let i = 0; i < numPoints; i++) {
-            newPoints.push({
-                x: Math.random() * canvasRef.current.width,
-                y: Math.random() * canvasRef.current.height
-            });
+            newPoints.push([
+                Math.random() * canvasRef.current.width,
+                Math.random() * canvasRef.current.height
+            ]);
         }
 
         setPoints([...points, ...newPoints]);
-        setInputValue('');
+        setInputPointValue('');
     };
 
 
     const clear = () => {
         setPoints([]);
         setLines([]);
-    }
+        setLastPosition([]);
+        setCentroidEdges([]);
+        setCentroids([]);
+    };
+
+
+    const run = async () => {
+        
+        const numIterations = parseInt(inputIterationValue, 10);
+        const millisecondDelay = parseInt(inputDelayValue, 10);
+
+        if (isNaN(numIterations)) {
+            alert('Please enter a valid number');
+            return;
+        }
+
+        for( let i = 0; i < numIterations; i++) {
+            const data = await fetchData('api/default/', 'POST', {"points": points});
+            
+            setCentroids(data.centroids);
+            setCentroidEdges(data.centroid_edges);
+            setLines(data.edges);
+
+            await delayedExecution(millisecondDelay);
+            
+            // console.log(centroids);
+            setPoints(data.centroids);
+            setCentroids([]);
+            setCentroidEdges([]);
+            setLines([]);
+        }
+    };
+
+
+    const handleInputDelayChange = (e) => {
+        setInputDelayValue(e.target.value);
+    };
     
+
+    async function delayedExecution(milliseconds) {
+        await sleep(milliseconds);
+    };
+
     
     return (
         <div>
@@ -186,17 +276,31 @@ function Canvas() {
             <div className="control-panel">
                 <input
                     type="text"
-                    value={inputValue}
-                    onChange={handleInputChange}
+                    value={inputPointValue}
+                    onChange={handleInputPointChange}
                     placeholder="Enter number of points"
                 />
                 <button onClick={handleAddPoints}>Add Points</button>
                 <Toggle text="Add points " toggleState={addPointState} onToggle={handleToggle}/>
+                <input
+                    type="text"
+                    value={inputDelayValue}
+                    onChange={handleInputDelayChange}
+                    placeholder="Delay"
+                />
                 <div className="control-panel">
                     <button onClick={zoomIn}>Zoom In</button>
                     <button onClick={zoomOut}>Zoom Out</button>
+                    <button onClick={resetZoom}>Reset Zoom</button>
                 </div>
                 <button onClick={clear}>Clear</button>
+                <input
+                    type="text"
+                    value={inputIterationValue}
+                    onChange={handleInputIterationChange}
+                    placeholder="Lloyd iteration count"
+                />
+                <button onClick={run}>Run</button>
             </div>
         </div>
 
