@@ -65,8 +65,9 @@ function Canvas() {
         // points.forEach(point => {
         //     console.log(point);
         // });
-    }, [points, lines, scale]);
+    }, [points, lines, scale, centroidEdges, centroids]);
 
+    
     
     useEffect(() => {
 
@@ -234,19 +235,35 @@ function Canvas() {
         }
 
         for( let i = 0; i < numIterations; i++) {
-            const data = await fetchData('api/default/', 'POST', {"points": points});
-            
-            setCentroids(data.centroids);
-            setCentroidEdges(data.centroid_edges);
-            setLines(data.edges);
 
+            var start = new Date();
+            const data = await fetchData('api/default/', 'POST', {"points": points});
+            var end = new Date();
+            var duration = end - start;
+            console.log("Points: " + points.length + ", Duration: " + duration);
+
+            if (!data) {
+                alert("Smt went wrong!")
+            }
+            
+            if ( data.centroids && data.centroids.length > 0 ) {
+                setCentroids(data.centroids);
+            }
+            if ( data.centroid_edges && data.centroid_edges.length > 0 ) {
+                setCentroidEdges(data.centroid_edges);
+            }
+            if ( data.edges && data.edges.length > 0 ) {
+                setLines(data.edges);
+            }
+            
             await delayedExecution(millisecondDelay);
             
             // console.log(centroids);
-            setPoints(data.centroids);
-            setCentroids([]);
-            setCentroidEdges([]);
-            setLines([]);
+            if ( data.centroids && data.centroids.length > 0 ) {
+                setPoints(data.centroids);
+                setCentroids([]);
+                setCentroidEdges([]);
+            }
         }
     };
 
