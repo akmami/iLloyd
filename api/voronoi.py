@@ -6,6 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from scipy.spatial import Voronoi
 import logging
 import numpy as np
+from helper import Point, Event, Arc, Segment, PriorityQueue, circle, intersect, intersection, check_circle_event
 
 logger = logging.getLogger(__name__)
 
@@ -77,19 +78,173 @@ def default(request):
 
 @csrf_exempt
 @api_view(["POST", ])
-def delaunay(request):
-
+def fortunes_algorithm(request):
     data = request.data
     
     if "points" not in data:
         return Response({"error": "Missing points."}, status=status.HTTP_400_BAD_REQUEST)
     
-    points = data["points"]
+    points = np.array(data["points"])
 
+    voronoi_edges = []
+    active_arcs = None
+
+    event_queue_sites = PriorityQueue()
+    event_queue_circles = PriorityQueue()
+
+    min_x = -50.0
+    max_x = -50.0
+    min_y = 550.0
+    max_y = 550.0
+
+    # insert points into the site events queue and update the bounding box
+    for pt in points:
+        event_point = Point(pt[0], pt[1])
+        event_queue_sites.push(event_point)
+        min_x = min(min_x, event_point.x)
+        min_y = min(min_y, event_point.y)
+        max_x = max(max_x, event_point.x)
+        max_y = max(max_y, event_point.y)
+
+    # expand the bounding box by a margin
+    dx = (max_x - min_x + 1) / 5.0
+    dy = (max_y - min_y + 1) / 5.0
+    min_x -= dx
+    max_x += dx
+    min_y -= dy
+    max_y += dy
+
+    # process events
+    while not event_queue_sites.empty():
+        if not event_queue_circles.empty() and (event_queue_circles.top().x <= event_queue_sites.top().x):            
+            # handle circle event
+            current_event = event_queue_circles.pop()
+
+            if current_event.valid:
+                new_edge = Segment(current_event.point)
+                voronoi_edges.append(new_edge)
+
+                # remove the associated arc and update neighboring arcs
+                current_arc = current_event.arc
+                if current_arc.prev is not None:
+                    current_arc.prev.next = current_arc.next
+                    current_arc.prev.right_segment = new_edge
+                if current_arc.next is not None:
+                    current_arc.next.prev = current_arc.prev
+                    current_arc.next.left_segment = new_edge
+
+                # complete edges connected to the removed arc
+                if current_arc.left_segment is not None: 
+                    current_arc.left_segment.finish(current_event.point)
+                if current_arc.right_segment is not None: 
+                    current_arc.right_segment.finish(current_event.point)
+
+                # recheck circle events on either side of the removed arc
+                if current_arc.prev is not None: check_circle_event(current_arc.prev, min_x, event_queue_circles)
+                if current_arc.next is not None: check_circle_event(current_arc.next, min_x, event_queue_circles)
+        
+        else:
+            # handle site event
+            point = event_queue_sites.pop()
+            # insert new arc for the site event
+            if active_arcs is None:
+                active_arcs = Arc(point)
+            else:
+                # find the arc above the new site point and insert the new arc
+                found_intersection = False
+                arc = active_arcs
+                while arc is not None:
+                    intersects, intersection_point = intersect(point, arc)
+                    if intersects:
+                        # the new parabola intersects the arc at this point in the beach line
+                        intersects_next, _ = intersect(point, arc.next)
+                        if arc.next is not None and not intersects_next:
+                            arc.next.prev = Arc(arc.point, arc, arc.next)
+                            arc.next = arc.next.prev
+                        else:
+                            arc.next = Arc(arc.point, arc)
+                        arc.next.right_segment = arc.right_segment
+
+                        # insert the new point between arc and arc.next
+                        arc.next.prev = Arc(point, arc, arc.next)
+                        arc.next = arc.next.prev
+
+                        arc = arc.next
+
+                        # create new edges at the intersection points
+                        new_segment = Segment(intersection_point)
+                        voronoi_edges.append(new_segment)
+                        arc.prev.right_segment = arc.left_segment = new_segment
+
+                        new_segment = Segment(intersection_point)
+                        voronoi_edges.append(new_segment)
+                        arc.next.left_segment = arc.right_segment = new_segment
+
+                        # check for potential circle events around the new arc
+                        check_circle_event(arc, min_x, event_queue_circles)
+                        check_circle_event(arc.prev, min_x, event_queue_circles)
+                        check_circle_event(arc.next, min_x, event_queue_circles)
+
+                        found_intersection = True
+                        break
+                    
+                    arc = arc.next
+
+                if not found_intersection:
+                    # if the new point does not intersect with any existing arcs, append it to the end of the list
+                    arc = active_arcs
+                    while arc.next is not None:
+                        arc = arc.next
+                    arc.next = Arc(point, arc)
+                    
+                    # insert a new segment between the new point and the last arc on the beach line
+                    mid_y = (arc.next.point.y + arc.point.y) / 2.0
+                    start_point = Point(min_x, mid_y)
+
+                    new_segment = Segment(start_point)
+                    arc.right_segment = arc.next.left_segment = new_segment
+                    voronoi_edges.append(new_segment)
+
+
+    # finalize diagram by processing remaining circle events
+    while not event_queue_circles.empty():
+        current_event = event_queue_circles.pop()
+
+        if current_event.valid:
+            new_edge = Segment(current_event.point)
+            voronoi_edges.append(new_edge)
+
+            # remove the associated arc and update neighboring arcs
+            arc = current_event.arc
+            if arc.prev is not None:
+                arc.prev.next = arc.next
+                arc.prev.right_segment = new_edge
+            if arc.next is not None:
+                arc.next.prev = arc.prev
+                arc.next.left_segment = new_edge
+
+            # complete edges connected to the removed arc
+            if arc.left_segment is not None: arc.left_segment.finish(current_event.point)
+            if arc.right_segment is not None: arc.right_segment.finish(current_event.point)
+
+            # recheck circle events on either side of the removed arc
+            if arc.prev is not None: check_circle_event(arc.prev, min_x, event_queue_circles)
+            if arc.next is not None: check_circle_event(arc.next, min_x, event_queue_circles)
+
+    
+    l = max_x + (max_x - min_x) + (max_y - min_y)
+    current_arc = active_arcs
+    while current_arc.next is not None:
+        if current_arc.right_segment is not None:
+            point = intersection(current_arc.point, current_arc.next.point, l*2.0)
+            current_arc.right_segment.finish(point)
+        current_arc = current_arc.next
+
+    # convert edges to a list of tuples for output
     edges = []
-
-    centroids = []
-
-    centroid_edges = []
-
-    return Response({"points": points, "edges": edges, "centroids": centroids, "centroid_edges": centroid_edges}, status=status.HTTP_200_OK)
+    for edge in voronoi_edges:
+        start_point = edge.start
+        end_point = edge.end
+        edges.append((start_point.x, start_point.y, end_point.x, end_point.y))
+    
+    return Response({"points": points, "edges": edges}, status=status.HTTP_200_OK)
