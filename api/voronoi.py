@@ -1,4 +1,4 @@
-import json
+from shapely.geometry import Polygon, box, LineString
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
@@ -6,21 +6,26 @@ from django.views.decorators.csrf import csrf_exempt
 from scipy.spatial import Voronoi
 import logging
 import numpy as np
-from helper import Point, Event, Arc, Segment, PriorityQueue, circle, intersect, intersection, check_circle_event
+from . import helper
 
 logger = logging.getLogger(__name__)
 
 @csrf_exempt
 @api_view(["POST", ])
-def default(request):
+def delaunay(request):
     data = request.data
     
-    if "points" not in data:
+    if "points" not in data or "boundaries" not in data:
         return Response({"error": "Missing points."}, status=status.HTTP_400_BAD_REQUEST)
     
     points = np.array(data["points"])
     
     vor = Voronoi(points)
+
+    min_x, min_y = data["boundaries"]["min_x"], data["boundaries"]["min_y"]
+    max_x, max_y = data["boundaries"]["max_x"], data["boundaries"]["max_y"]
+
+    boundary = box(min_x, min_y, max_x, max_y)
     
     edges = []
     center = vor.points.mean(axis=0)  # compute the center of all points
@@ -36,7 +41,7 @@ def default(request):
 
             # compute the direction of the ray
             t = vor.points[p2] - vor.points[p1]
-            t = t / np.linalg.norm(t)
+            t /= np.linalg.norm(t)
             n = np.array([-t[1], t[0]])
 
             midpoint = vor.points[[p1, p2]].mean(axis=0)
@@ -48,40 +53,41 @@ def default(request):
             edges.append((vor.vertices[v_finite].tolist(), ray_endpoint.tolist()))
         else:
             edges.append((vor.vertices[v1].tolist(), vor.vertices[v2].tolist()))
-
     
-    cells = {}
-    for point_idx, region_idx in enumerate(vor.point_region):
-        vertices = vor.regions[region_idx]
-        if -1 not in vertices:
-            cell_vertices = np.array([vor.vertices[i] for i in vertices])
-            cells[point_idx] = cell_vertices
-    
-    x_min, y_min = points.min(axis=0)
-    x_max, y_max = points.max(axis=0)
-
-    def clip_to_boundary(x, y):
-        x = max(min(x, x_max), x_min)
-        y = max(min(y, y_max), y_min)
-        return np.array([x, y])
-
     centroids = []
     centroid_edges = []
-    for point_idx, cell_vertices in cells.items():
-        cell_vertices = np.array([clip_to_boundary(*vertex) for vertex in cell_vertices])
-        centroid = cell_vertices.mean(axis=0)
-        centroids.append(centroid.tolist())
-        centroid_edges.append( [points[point_idx].tolist(), centroid.tolist()] )
-    
+    for point_idx, region_idx in enumerate(vor.point_region):
+        vertices = vor.regions[region_idx]
+        
+        # Filter out open regions which have -1 as vertex
+        if -1 in vertices:
+            continue
+        
+        # Get the polygon points for the cell
+        poly_points = [vor.vertices[i] for i in vertices]
+        polygon = Polygon(poly_points)
+        
+        # Clip the polygon with the boundary
+        clipped_polygon = polygon.intersection(boundary)
+        
+        # Calculate the centroid of the clipped polygon
+        if not clipped_polygon.is_empty:
+            centroid = clipped_polygon.centroid.coords[0]  # Returns a tuple (x, y)
+            centroids.append([centroid[0], centroid[1]])
+            centroid_edges.append( [points[point_idx].tolist(), [centroid[0], centroid[1]] ] )
+        #else:
+            # Handle cases where the clipping results in an empty polygon
+            # return Response({}, status=status.HTTP_400_BAD_REQUEST)
+
     return Response({"points": points, "edges": edges, "centroids": centroids, "centroid_edges": centroid_edges}, status=status.HTTP_200_OK)
 
 
 @csrf_exempt
 @api_view(["POST", ])
-def fortunes_algorithm(request):
+def fortune(request):
     data = request.data
     
-    if "points" not in data:
+    if "points" not in data or "boundaries" not in data:
         return Response({"error": "Missing points."}, status=status.HTTP_400_BAD_REQUEST)
     
     points = np.array(data["points"])
@@ -89,17 +95,15 @@ def fortunes_algorithm(request):
     voronoi_edges = []
     active_arcs = None
 
-    event_queue_sites = PriorityQueue()
-    event_queue_circles = PriorityQueue()
+    event_queue_sites = helper.PriorityQueue()
+    event_queue_circles = helper.PriorityQueue()
 
-    min_x = -50.0
-    max_x = -50.0
-    min_y = 550.0
-    max_y = 550.0
+    min_x, min_y = data["boundaries"]["min_x"], data["boundaries"]["min_y"]
+    max_x, max_y = data["boundaries"]["max_x"], data["boundaries"]["max_y"]
 
     # insert points into the site events queue and update the bounding box
     for pt in points:
-        event_point = Point(pt[0], pt[1])
+        event_point = helper.Point(pt[0], pt[1])
         event_queue_sites.push(event_point)
         min_x = min(min_x, event_point.x)
         min_y = min(min_y, event_point.y)
@@ -121,7 +125,7 @@ def fortunes_algorithm(request):
             current_event = event_queue_circles.pop()
 
             if current_event.valid:
-                new_edge = Segment(current_event.point)
+                new_edge = helper.Segment(current_event.point)
                 voronoi_edges.append(new_edge)
 
                 # remove the associated arc and update neighboring arcs
@@ -140,50 +144,50 @@ def fortunes_algorithm(request):
                     current_arc.right_segment.finish(current_event.point)
 
                 # recheck circle events on either side of the removed arc
-                if current_arc.prev is not None: check_circle_event(current_arc.prev, min_x, event_queue_circles)
-                if current_arc.next is not None: check_circle_event(current_arc.next, min_x, event_queue_circles)
+                if current_arc.prev is not None: helper.check_circle_event(current_arc.prev, min_x, event_queue_circles)
+                if current_arc.next is not None: helper.check_circle_event(current_arc.next, min_x, event_queue_circles)
         
         else:
             # handle site event
             point = event_queue_sites.pop()
             # insert new arc for the site event
             if active_arcs is None:
-                active_arcs = Arc(point)
+                active_arcs = helper.Arc(point)
             else:
                 # find the arc above the new site point and insert the new arc
                 found_intersection = False
                 arc = active_arcs
                 while arc is not None:
-                    intersects, intersection_point = intersect(point, arc)
+                    intersects, intersection_point = helper.intersect(point, arc)
                     if intersects:
                         # the new parabola intersects the arc at this point in the beach line
-                        intersects_next, _ = intersect(point, arc.next)
+                        intersects_next, _ = helper.intersect(point, arc.next)
                         if arc.next is not None and not intersects_next:
-                            arc.next.prev = Arc(arc.point, arc, arc.next)
+                            arc.next.prev = helper.Arc(arc.point, arc, arc.next)
                             arc.next = arc.next.prev
                         else:
-                            arc.next = Arc(arc.point, arc)
+                            arc.next = helper.Arc(arc.point, arc)
                         arc.next.right_segment = arc.right_segment
 
                         # insert the new point between arc and arc.next
-                        arc.next.prev = Arc(point, arc, arc.next)
+                        arc.next.prev = helper.Arc(point, arc, arc.next)
                         arc.next = arc.next.prev
 
                         arc = arc.next
 
                         # create new edges at the intersection points
-                        new_segment = Segment(intersection_point)
+                        new_segment = helper.Segment(intersection_point)
                         voronoi_edges.append(new_segment)
                         arc.prev.right_segment = arc.left_segment = new_segment
 
-                        new_segment = Segment(intersection_point)
+                        new_segment = helper.Segment(intersection_point)
                         voronoi_edges.append(new_segment)
                         arc.next.left_segment = arc.right_segment = new_segment
 
                         # check for potential circle events around the new arc
-                        check_circle_event(arc, min_x, event_queue_circles)
-                        check_circle_event(arc.prev, min_x, event_queue_circles)
-                        check_circle_event(arc.next, min_x, event_queue_circles)
+                        helper.check_circle_event(arc, min_x, event_queue_circles)
+                        helper.check_circle_event(arc.prev, min_x, event_queue_circles)
+                        helper.check_circle_event(arc.next, min_x, event_queue_circles)
 
                         found_intersection = True
                         break
@@ -195,13 +199,13 @@ def fortunes_algorithm(request):
                     arc = active_arcs
                     while arc.next is not None:
                         arc = arc.next
-                    arc.next = Arc(point, arc)
+                    arc.next = helper.Arc(point, arc)
                     
                     # insert a new segment between the new point and the last arc on the beach line
                     mid_y = (arc.next.point.y + arc.point.y) / 2.0
-                    start_point = Point(min_x, mid_y)
+                    start_point = helper.Point(min_x, mid_y)
 
-                    new_segment = Segment(start_point)
+                    new_segment = helper.Segment(start_point)
                     arc.right_segment = arc.next.left_segment = new_segment
                     voronoi_edges.append(new_segment)
 
@@ -211,7 +215,7 @@ def fortunes_algorithm(request):
         current_event = event_queue_circles.pop()
 
         if current_event.valid:
-            new_edge = Segment(current_event.point)
+            new_edge = helper.Segment(current_event.point)
             voronoi_edges.append(new_edge)
 
             # remove the associated arc and update neighboring arcs
@@ -228,15 +232,15 @@ def fortunes_algorithm(request):
             if arc.right_segment is not None: arc.right_segment.finish(current_event.point)
 
             # recheck circle events on either side of the removed arc
-            if arc.prev is not None: check_circle_event(arc.prev, min_x, event_queue_circles)
-            if arc.next is not None: check_circle_event(arc.next, min_x, event_queue_circles)
+            if arc.prev is not None: helper.check_circle_event(arc.prev, min_x, event_queue_circles)
+            if arc.next is not None: helper.check_circle_event(arc.next, min_x, event_queue_circles)
 
     
     l = max_x + (max_x - min_x) + (max_y - min_y)
     current_arc = active_arcs
     while current_arc.next is not None:
         if current_arc.right_segment is not None:
-            point = intersection(current_arc.point, current_arc.next.point, l*2.0)
+            point = helper.intersection(current_arc.point, current_arc.next.point, l*2.0)
             current_arc.right_segment.finish(point)
         current_arc = current_arc.next
 
@@ -246,5 +250,5 @@ def fortunes_algorithm(request):
         start_point = edge.start
         end_point = edge.end
         edges.append((start_point.x, start_point.y, end_point.x, end_point.y))
-    
-    return Response({"points": points, "edges": edges}, status=status.HTTP_200_OK)
+
+    return Response({"points": points, "edges": edges, "centroids": [], "centroid_edges": []}, status=status.HTTP_200_OK)
